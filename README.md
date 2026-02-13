@@ -1,10 +1,29 @@
-# muCommander
+# muCommander - Single-Click Dark Edition
 
-[![Version](http://img.shields.io/badge/version-1.6.0-blue.svg?style=flat)](https://github.com/mucommander/mucommander/releases/tag/nightly)
 [![License](http://img.shields.io/badge/License-GPL-blue.svg)](http://www.gnu.org/copyleft/gpl.html)
-[![Build Status](https://github.com/mucommander/mucommander/actions/workflows/nightly.yml/badge.svg)](https://github.com/mucommander/mucommander/actions/workflows/nightly.yml)
-[![Coverity Scan](https://scan.coverity.com/projects/3642/badge.svg)](https://scan.coverity.com/projects/3642)
-[![GitHub Discussion](https://img.shields.io/github/discussions/mucommander/mucommander.svg)](https://github.com/mucommander/mucommander/discussions)
+
+Fork of [muCommander 1.5.2](https://github.com/mucommander/mucommander) with usability improvements.
+
+## What's Different in This Fork?
+
+This fork modernizes muCommander with two major improvements:
+
+### 🖱️ Single-Click Navigation
+- **Single left-click** opens files and folders instantly (no more double-clicking!)
+- **Command+click** (Mac) or **Ctrl+click** (Windows/Linux) for multi-select
+- **Shift+click** for range selection
+- **Right-click** for context menu
+
+### 🌙 Dark Mode by Default
+- **FlatLaf Dark theme** set as default - no more blinding white screens on startup
+- Dark theme preselected in initial setup wizard
+- All other Look & Feel options still available in preferences
+
+See [CHANGES.md](CHANGES.md) for technical details.
+
+---
+
+## About muCommander
 
 muCommander is a lightweight, cross-platform file manager with a dual-pane interface.
 It runs on any operating system with Java support (macOS, Windows, Linux, *BSD, Solaris...).
