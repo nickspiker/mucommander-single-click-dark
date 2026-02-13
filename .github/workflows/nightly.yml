@@ -1,0 +1,227 @@
+name: Nightly Build
+
+on: 
+  schedule:
+    - cron:  '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.mucommander_version.outputs.VERSION }}
+      full_version: ${{ steps.mucommander_version.outputs.FULL_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+      - name : Get version
+        id: mucommander_version
+        run: |
+          echo "FULL_VERSION=$(${{github.workspace}}/gradlew -q printFullVersionName)" >> $GITHUB_OUTPUT
+          echo "VERSION=$(${{github.workspace}}/gradlew -q printVersionName)" >> $GITHUB_OUTPUT
+
+  upload-macos-artifacts:
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+            os: macos-15
+          - arch: x86_64
+            os: macos-15-intel
+          - arch: noarch
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    needs: get-version
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Checkout 'release'
+        uses: actions/checkout@v4
+        with:
+          repository: mucommander/release
+          path: release
+          token: ${{ secrets.RELEASE_REPO_TOKEN }}
+
+      - name: Apply 'release' patches
+        run: |
+          git config --global user.name gh-action
+          git config --global user.email gh-action
+          git am release/0001-set-credentials-to-Google-Drive.patch
+          git am release/0002-set-credentials-to-Dropbox.patch
+          git am release/0005-set-credentials-to-OneDrive.patch
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '18'
+          distribution: 'adopt'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Setup keychain
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+
+      - name: Build dmg
+        run: |
+          if [ "${{ matrix.arch }}" == 'noarch' ]; then
+            ./gradlew createDmg -Pidentity="${{ secrets.MACOS_IDENTITY }}"
+          else
+            ./gradlew dmg -Parch=${{ matrix.arch }} -Pidentity="${{ secrets.MACOS_IDENTITY }}"
+          fi
+
+      - name: Sign dmg
+        run: /usr/bin/codesign --entitlements package/osx/mucommander-entitlements --timestamp --options runtime --deep --force -s "${{ secrets.MACOS_IDENTITY }}"  "./build/distributions/mucommander-${{ needs.get-version.outputs.full_version }}-${{ matrix.arch }}.dmg" -v
+
+      - name: Notarize dmg
+        run: |
+          xcrun notarytool submit  "./build/distributions/mucommander-${{ needs.get-version.outputs.full_version }}-${{ matrix.arch }}.dmg" --apple-id ${{ secrets.MACOS_APPLE_ID }} --password ${{ secrets.MACOS_APP_SPECIFIC_PASSWORD }} --team-id ${{ secrets.MACOS_TEAM_ID }} --wait | tee output.log
+          ID=$(grep 'id:' output.log | head -n 1 | awk '{print $2}')
+          echo $ID
+          xcrun notarytool log --apple-id ${{ secrets.MACOS_APPLE_ID }} --password ${{ secrets.MACOS_APP_SPECIFIC_PASSWORD }} --team-id ${{ secrets.MACOS_TEAM_ID }} $ID
+          grep -vqz "status: Invalid" output.log
+
+      - name: Staple dmg
+        run: xcrun stapler staple "./build/distributions/mucommander-${{ needs.get-version.outputs.full_version }}-${{ matrix.arch }}.dmg"
+
+      - name: Upload dmg
+        uses: actions/upload-artifact@master
+        with:
+          name: "mucommander-${{ needs.get-version.outputs.full_version }}-${{ matrix.arch }}.dmg"
+          path: "./build/distributions/mucommander-${{ needs.get-version.outputs.full_version }}-${{ matrix.arch }}.dmg"
+          compression-level: 0
+
+  upload-linux-artifacts:
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+            os: ubuntu-22.04-arm
+          - arch: x86_64
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    needs: get-version
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '20'
+          distribution: 'adopt'
+
+      - name: Checkout 'release'
+        uses: actions/checkout@v4
+        with:
+          repository: mucommander/release
+          path: release
+          token: ${{ secrets.RELEASE_REPO_TOKEN }}
+
+      - name: Apply 'release' patches
+        run: |
+          git config --global user.name gh-action
+          git config --global user.email gh-action
+          git am release/0001-set-credentials-to-Google-Drive.patch
+          git am release/0002-set-credentials-to-Dropbox.patch
+          git am release/0005-set-credentials-to-OneDrive.patch
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Build tgz, deb, and rpm
+        run: ./gradlew tgz deb rpm -Parch=${{ matrix.arch }}
+
+      - name: Build portable
+        if: matrix.arch == 'x86_64'
+        run: ./gradlew portable -Parch=${{ matrix.arch }}
+
+      - name: Import GPG
+        run: gpg --passphrase ${{ secrets.PASSPHRASE }} --pinentry-mode loopback --import release/rpm/.gpg
+
+      - name: Set .rpmmacros
+        run: |
+          cat << EOF > ~/.rpmmacros
+          %_signature gpg
+          %_gpg_name Arik Hadas
+          %_gpgbin /usr/bin/gpg2
+          %__gpg_sign_cmd %{__gpg} gpg --force-v3-sigs --batch --passphrase ${{ secrets.PASSPHRASE }} --pinentry-mode loopback --verbose --no-armor --no-secmem-warning -u "%{_gpg_name}" -sbo %{__signature_filename} --digest-algo sha256 %{__plaintext_filename}'
+          EOF
+
+      - name: Sign rpm
+        run: rpmsign --key-id='Arik Hadas' --addsign "./build/distributions/mucommander-${{ needs.get-version.outputs.version }}-1.x86_64.rpm"
+
+      - name: Upload portable
+        if: matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@master
+        with:
+          name: "mucommander-${{ needs.get-version.outputs.full_version }}-portable.zip"
+          path: "./build/distributions/mucommander-${{ needs.get-version.outputs.full_version }}-portable.zip"
+
+      - name: Upload tgz
+        uses: actions/upload-artifact@master
+        with:
+          name: "mucommander-${{ needs.get-version.outputs.full_version }}.tgz"
+          path: "./build/distributions/mucommander-${{ needs.get-version.outputs.full_version }}.tgz"
+
+      - name: Upload deb
+        uses: actions/upload-artifact@master
+        with:
+          name: "mucommander_${{ needs.get-version.outputs.version }}_amd64.deb"
+          path: "./build/distributions/mucommander_${{ needs.get-version.outputs.version }}_amd64.deb"
+
+      - name: Upload rpm
+        uses: actions/upload-artifact@master
+        with:
+          name: "mucommander-${{ needs.get-version.outputs.version }}-1.x86_64.rpm"
+          path: "./build/distributions/mucommander-${{ needs.get-version.outputs.version }}-1.x86_64.rpm"
+
+
+  upload-windows-artifacts:
+    strategy:
+      matrix:
+        include:
+          #- arch: aarch64
+          #  os: windows-11-arm
+          #  java: '23'
+          - arch: x86_64
+            os: windows-2025
+            java: '24'
+    runs-on: ${{ matrix.os }}
+    needs: get-version
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'adopt'
+
+      - name: Checkout 'release'
+        uses: actions/checkout@v4
+        with:
+          repository: mucommander/release
+          path: release
+          token: ${{ secrets.RELEASE_REPO_TOKEN }}
+
+      - name: Apply 'release' patches
+        run: |
+          git config --global user.name gh-action
+          git config --global user.email gh-action
+          git am release/0001-set-credentials-to-Google-Drive.patch
+          git am release/0002-set-credentials-to-Dropbox.patch
+          git am release/0005-set-credentials-to-OneDrive.patch
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Build msi
+        run: ./gradlew -Parch=${{ matrix.arch }} msi
+
+      - name: Upload msi
+        uses: actions/upload-artifact@master
+        with:
+          name: "mucommander-${{ needs.get-version.outputs.version }}-${{ matrix.arch }}.msi"
+          path: "./build/distributions/mucommander-${{ needs.get-version.outputs.version }}.msi"

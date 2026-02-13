@@ -1,0 +1,19 @@
+name: Tests
+
+on: [pull_request, workflow_dispatch]
+
+jobs:
+  unit-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'adopt'
+      - uses: gradle/wrapper-validation-action@v2
+      - uses: gradle/actions/setup-gradle@v3
+      - run: ./gradlew test

@@ -1,0 +1,41 @@
+repositories {
+    repositories.mavenCentral()
+    maven {
+        url = uri("https://www.mucommander.com/maven/")
+    }
+}
+
+dependencies {
+    api project(':mucommander-commons-file')
+
+    comprise 'net.sf.sevenzipjbinding:sevenzipjbinding:16.02-2.01'
+
+    // Use a patched version of sevenzipjbinding-all-platforms with support for Apple silicon
+    // See https://github.com/mucommander/mucommander/pull/1237
+    comprise 'com.mucommander:sevenzipjbinding-all-platforms:16.02-2.01'
+
+    testImplementation 'org.testng:testng:7.11.0'
+}
+
+jar {
+    from configurations.comprise.collect { it.isDirectory() ? it : zipTree(it).matching {
+        exclude 'META-INF/**'
+    } }
+    bundle {
+        bnd ('Bundle-Name': 'muCommander-sevenzipjbindings',
+                'Bundle-Vendor': 'muCommander',
+                'Bundle-Description': 'Wrapper for SevenZipJBindings',
+                'Bundle-DocURL': 'https://www.mucommander.com',
+                'Export-Package': 'com.mucommander.sevenzipjbindings,net.sf.sevenzipjbinding',
+                'Import-Package': '*',
+                'Specification-Title': "muCommander",
+                'Specification-Vendor': "Arik Hadas",
+                'Specification-Version': project.version,
+                'Implementation-Title': "muCommander",
+                'Implementation-Vendor': "Arik Hadas",
+                'Implementation-Version': revision.substring(0, 7),
+                'Build-Date': new Date().format('yyyyMMdd'),
+                'Build-Url': "https://www.mucommander.com/version/nightly.xml")
+    }
+}
+
